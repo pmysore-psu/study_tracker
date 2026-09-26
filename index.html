@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Live Study Tracker & Heatmap</title>
+    <!-- Tailwind CSS for styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Firebase SDKs -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
+        import { getFirestore, collection, setDoc, doc, getDocs } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+
+        // TODO: Replace with your own Firebase project configuration
+        const firebaseConfig = {
+        apiKey: "AIzaSyAEUndKc0W1M_SPNeIxUU65m13EKh67U3I",
+        authDomain: "study-tracker-59fe0.firebaseapp.com",
+        projectId: "study-tracker-59fe0",
+        storageBucket: "study-tracker-59fe0.firebasestorage.app",
+        messagingSenderId: "1093428015301",
+        appId: "1:1093428015301:web:bce9457a6cb534177cc0ac"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
+
+        window.db = db;
+        window.FB = { setDoc, doc, collection, getDocs };
+        
+        // Trigger initial data load once Firebase is ready
+        window.dispatchEvent(new Event('firebase-ready'));
+    </script>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col items-center justify-center p-4">
+
+    <div class="max-w-xl w-full bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-2xl space-y-6">
+        
+        <!-- Header -->
+        <div class="text-center">
+            <h1 class="text-2xl font-bold tracking-tight">Study Tracker & Heatmap</h1>
+            <p class="text-sm text-slate-400">Track time, build consistency, sync to the cloud.</p>
+        </div>
+
+        <!-- Stopwatch Section -->
+        <div class="bg-slate-950 p-6 rounded-xl border border-slate-800 flex flex-col items-center space-y-4">
+            <div class="w-full flex justify-between items-center">
+                <input type="text" id="subjectInput" placeholder="Subject (e.g., Math, Coding)" 
+                    class="bg-slate-900 border border-slate-700 text-sm rounded-lg px-3 py-2 w-full focus:outline-none focus:border-indigo-500">
+            </div>
+
+            <!-- Timer Display -->
+            <div id="timerDisplay" class="text-5xl font-mono font-bold tracking-widest text-indigo-400">
+                00:00:00
+            </div>
+
+            <!-- Controls -->
+            <div class="flex space-x-3 w-full">
+                <button id="startBtn" onclick="startTimer()" class="flex-1 bg-emerald-600 hover:bg-emerald-500 font-semibold py-2 rounded-lg transition">Start</button>
+                <button id="pauseBtn" onclick="pauseTimer()" class="flex-1 bg-amber-600 hover:bg-amber-500 font-semibold py-2 rounded-lg transition" disabled>Pause</button>
+                <button id="stopBtn" onclick="stopAndSaveTimer()" class="flex-1 bg-rose-600 hover:bg-rose-500 font-semibold py-2 rounded-lg transition" disabled>Stop & Save</button>
+            </div>
+        </div>
+
+        <!-- GitHub Heatmap Section -->
+        <div class="bg-slate-950 p-4 rounded-xl border border-slate-800 overflow-x-auto">
+            <h2 class="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-3">Study Activity Heatmap</h2>
+            <div id="heatmapGrid" class="grid grid-flow-col grid-rows-7 gap-1.5 min-w-[500px]">
+                <!-- Heatmap cells injected dynamically via JavaScript -->
+            </div>
+            <div class="flex items-center justify-end space-x-2 mt-3 text-xs text-slate-400">
+                <span>Less</span>
+                <div class="w-3 h-3 bg-slate-800 rounded-sm"></div>
+                <div class="w-3 h-3 bg-indigo-950 rounded-sm"></div>
+                <div class="w-3 h-3 bg-indigo-700 rounded-sm"></div>
+                <div class="w-3 h-3 bg-indigo-500 rounded-sm"></div>
+                <span>More</span>
+            </div>
+        </div>
+
+        <div id="syncStatus" class="text-xs text-center text-slate-500">Connecting to cloud storage...</div>
+    </div>
+
+    <script>
+        let secondsElapsed = 0;
+        let timerInterval = null;
+        let isRunning = false;
+        let dailyData = {}; // Format: { "YYYY-MM-DD": totalMinutes }
+
+        // Format seconds into HH:MM:SS
+        function formatTime(totalSeconds) {
+            const h = String(Math.floor(totalSeconds / 3600)).padStart(2, '0');
+            const m = String(Math.floor((totalSeconds % 3600) / 60)).padStart(2, '0');
+            const s = String(totalSeconds % 60).padStart(2, '0');
+            return `${h}:${m}:${s}`;
+        }
+
+        function startTimer() {
+            if (isRunning) return;
+            isRunning = true;
+            document.getElementById('startBtn').disabled = true;
+            document.getElementById('pauseBtn').disabled = false;
+            document.getElementById('stopBtn').disabled = false;
+
+            timerInterval = setInterval(() => {
+                secondsElapsed++;
+                document.getElementById('timerDisplay').innerText = formatTime(secondsElapsed);
+            }, 1000);
+        }
+
+        function pauseTimer() {
+            isRunning = false;
+            clearInterval(timerInterval);
+            document.getElementById('startBtn').disabled = false;
+            document.getElementById('pauseBtn').disabled = true;
+        }
+
+        async function stopAndSaveTimer() {
+            pauseTimer();
+            const minutesStudied = Math.round(secondsElapsed / 60);
+            
+            if (minutesStudied > 0) {
+                const todayStr = new Date().toISOString().split('T')[0];
+                dailyData[todayStr] = (dailyData[todayStr] || 0) + minutesStudied;
+                
+                renderHeatmap();
+                await syncToFirebase(todayStr, dailyData[todayStr]);
+            }
+
+            // Reset stopwatch
+            secondsElapsed = 0;
+            document.getElementById('timerDisplay').innerText = "00:00:00";
+            document.getElementById('stopBtn').disabled = true;
+        }
+
+        // Render GitHub-Style Heatmap (Last ~4 months / ~120 days)
+        function renderHeatmap() {
+            const grid = document.getElementById('heatmapGrid');
+            grid.innerHTML = '';
+
+            const today = new Date();
+            for (let i = 119; i >= 0; i--) {
+                const d = new Date();
+                d.setDate(today.getDate() - i);
+                const dateStr = d.toISOString().split('T')[0];
+                const minutes = dailyData[dateStr] || 0;
+
+                const cell = document.createElement('div');
+                cell.className = "w-3.5 h-3.5 rounded-sm transition-all";
+                cell.title = `${dateStr}: ${minutes} mins studied`;
+
+                // Color grading based on study volume
+                if (minutes === 0) cell.classList.add('bg-slate-800');
+                else if (minutes < 30) cell.classList.add('bg-indigo-950');
+                else if (minutes < 90) cell.classList.add('bg-indigo-700');
+                else cell.classList.add('bg-indigo-500');
+
+                grid.appendChild(cell);
+            }
+        }
+
+        // Firebase Sync Operations
+        async function syncToFirebase(dateStr, minutes) {
+            const statusEl = document.getElementById('syncStatus');
+            try {
+                await window.FB.setDoc(window.FB.doc(window.db, "studyLogs", dateStr), {
+                    minutes: minutes,
+                    lastUpdated: new Date()
+                }, { merge: true });
+                statusEl.innerText = "Synced to cloud successfully!";
+            } catch (err) {
+                statusEl.innerText = "Cloud sync failed. Saved locally.";
+                console.error(err);
+            }
+        }
+
+        async function loadFromFirebase() {
+            const statusEl = document.getElementById('syncStatus');
+            try {
+                const querySnapshot = await window.FB.getDocs(window.FB.collection(window.db, "studyLogs"));
+                querySnapshot.forEach((doc) => {
+                    dailyData[doc.id] = doc.data().minutes;
+                });
+                renderHeatmap();
+                statusEl.innerText = "Cloud data loaded successfully!";
+            } catch (err) {
+                statusEl.innerText = "Failed to load cloud data.";
+                console.error(err);
+            }
+        }
+
+        window.addEventListener('firebase-ready', loadFromFirebase);
+        renderHeatmap(); // Initial render placeholder
+    </script>
+</body>
+</html>
